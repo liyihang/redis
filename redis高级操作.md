@@ -448,25 +448,319 @@ $在有些时间使用的不仅仅是单线程，还有IO多路复用$
 
 
 
-
-
-
-
-
-
 ## 3.Redis的持久化
 
+Redis 提供了不同级别的持久化方式:
+
+- RDB持久化方式能够在指定的时间间隔能对你的数据进行快照存储.
+- AOF持久化方式记录每次对服务器写的操作,当服务器重启的时候会重新执行这些命令来恢复原始的数据,AOF命令以redis协议追加保存每次写的操作到文件末尾.Redis还能对AOF文件进行后台重写,使得AOF文件的体积不至于过大.
+- 如果你只希望你的数据在服务器运行的时候存在,你也可以不使用任何持久化方式.
+- 你也可以同时开启两种持久化方式, 在这种情况下, 当redis重启的时候会优先载入AOF文件来恢复原始的数据,因为在通常情况下AOF文件保存的数据集要比RDB文件保存的数据集要完整.
+- 最重要的事情是了解RDB和AOF持久化方式的不同,让我们以RDB持久化方式开始:
+
+#### RDB方式
+
+- RDB是一个非常紧凑的文件,它保存了某个时间点得数据集,非常适用于数据集的备份,比如你可以在每个小时报保存一下过去24小时内的数据,同时每天保存过去30天的数据,这样即使出了问题你也可以根据需求恢复到不同版本的数据集.
+- RDB是一个紧凑的单一文件,很方便传送到另一个远端数据中心或者亚马逊的S3（可能加密），非常适用于灾难恢复.
+- RDB在保存RDB文件时父进程唯一需要做的就是fork出一个子进程,接下来的工作全部由子进程来做，父进程不需要再做其他IO操作，所以RDB持久化方式可以最大化redis的性能.
+- 与AOF相比,在恢复大的数据集的时候，RDB方式会更快一些.
+
+$redis默认的就是RDB方式的持久化方式$
+
+如果我们安装的是单独的redis则没有使用持久化策略。
+
+安装visual-nmp默认的是RDB持久化，持久化的数据在安装目录的`cache/redis/dump.rdb`里面。
+
+```
+save 900 1    900秒有一次改的就保存
+save 300 10	  300秒内有十次改的就保存
+save 60 10000 60秒内有10000次改的就保存
+
+# The filename where to dump the DB   rdb存放的文件名
+dbfilename dump.rdb
+
+# Redis to log on the standard output.
+logfile "redis.log"  配置redis的日志文件
+```
 
 
 
 
-## 4.Redis复制的原理和优化
+
+#### AOF 方式
+
+- 使用AOF 会让你的Redis更加耐久: 你可以使用不同的fsync策略：无fsync,每秒fsync,每次写的时候fsync.使用默认的每秒fsync策略,Redis的性能依然很好(fsync是由后台线程进行处理的,主线程会尽力处理客户端请求),一旦出现故障，你最多丢失1秒的数据.
+- AOF文件是一个只进行追加的日志文件,所以不需要写入seek,即使由于某些原因(磁盘空间已满，写的过程中宕机等等)未执行完整的写入命令,你也也可使用redis-check-aof工具修复这些问题.
+- Redis 可以在 AOF 文件体积变得过大时，自动地在后台对 AOF 进行重写： 重写后的新 AOF 文件包含了恢复当前数据集所需的最小命令集合。 整个重写操作是绝对安全的，因为 Redis 在创建新 AOF 文件的过程中，会继续将命令追加到现有的 AOF 文件里面，即使重写过程中发生停机，现有的 AOF 文件也不会丢失。 而一旦新 AOF 文件创建完毕，Redis 就会从旧 AOF 文件切换到新 AOF 文件，并开始对新 AOF 文件进行追加操作。
+- AOF 文件有序地保存了对数据库执行的所有写入操作， 这些写入操作以 Redis 协议的格式保存， 因此 AOF 文件的内容非常容易被人读懂， 对文件进行分析（parse）也很轻松。 导出（export） AOF 文件也非常简单： 举个例子， 如果你不小心执行了 FLUSHALL 命令， 但只要 AOF 文件未被重写， 那么只要停止服务器， 移除 AOF 文件末尾的 FLUSHALL 命令， 并重启 Redis ， 就可以将数据集恢复到 FLUSHALL 执行之前的状态。
+
+###### AOF的三种策略
+
+$always$     redis 的每条命令都从缓冲区写到磁盘中
+
+$everysec$   redis每秒一次将命令从缓冲区写到硬盘（默认值）
+
+$no$               redis根据系统决定是否将命令从缓冲区写到硬盘
+
+
+
+###### AOF实现的两种方式
+
+###### $bgrewriteaof命令$
+
+要实现bgrewriteaof我们需要配置一下文件
+
+```
+auto-aof-rewrite-percentage 100      文件增长率（两次的对比）
+auto-aof-rewrite-min-size 64mb       自动重写的最小尺寸
+```
+
+aof重写的相关统计项
+
+```
+aof_current_size   aof当前的文件大小
+aof_base_size      aof上次重写或者启动时的大小
+```
+
+aof重写同时满足的条件
+
+```
+aof_current_size > auto-aof-rewrite-min-size
+(aof_current_size - aof_base_size)/aof_base_size > auto-aof-rewrite-percentage
+```
+
+
+
+###### $aof重写配置$
+
+```
+appendonly no   是否重写
+appendfilename "appendonly.aof"  重写的文件名
+# appendfsync always
+appendfsync everysec     默认的重写策略
+# appendfsync no
+no-appendfsync-on-rewrite no  重写的时候是否关键aof append
+aof-load-truncated yes   重写数据有错误是否忽略
+
+```
+
+
+
+###### 测试
+
+```
+127.0.0.1:6379> config get appendonly 查看aof配置
+1) "appendonly"
+2) "no"
+127.0.0.1:6379> config set appendonly yes
+OK
+127.0.0.1:6379> config rewrite
+OK
+127.0.0.1:6379> config get appendonly
+1) "appendonly"
+2) "yes"
+127.0.0.1:6379>
+
+
+```
+
+设置完成后，目录生成appendonly.aof文件，文件内容如下。
+
+```
+……
+SET
+$4
+name
+$3
+jim
+*2
+$6
+SELECT
+$1
+0
+*3
+$3
+set
+$1
+k
+$5
+hahah
+……
+```
 
 
 
 
+
+
+
+## 4.Redis主从复制
+
+redis中我们可以配置主从复制。
+
+简单的说就是一个master节点可以有多个slave节点，一个slave节点只能属于一个master。数据是从master到slave的，就是说数据是单向的。
+
+#### 在redis中配置主从复制。
+
+这里也有两种方式。
+
+```
+slaveof命令
+配置文件配置
+```
+
+#### 通过修改配置文件实现主从复制。
+
+1.修改配置文件。如果是`主节点`的话，我们可以不需要修改配置。
+
+2.修改slave节点
+
+```
+1.复制配置文件 并重命名
+#修改内容如下
+port 6380  端口号（☆☆☆☆☆）
+logfile "redis6380.log"  redis log文件
+dbfilename "dump80.rdb"  rdb文件
+dir "C:\\Program Files\\Redis" 文件路径
+slaveof 127.0.0.1 6379  从属于哪个主节点（☆☆☆☆☆）
+```
+
+#### 测试
+
+master服务器端启动
+
+```
+redis-server.exe redis.windows.slave.conf
+```
+
+slave 服务器端启动
+
+```
+redis-server.exe redis.windows.slave.conf
+```
+
+master 客服端启动
+
+```
+redis-cli  #默认6379端口
+```
+
+slave客户端启动
+
+```
+redis-cli.exe -p 6380
+```
+
+master上写数据
+
+```
+127.0.0.1:6379> set test thisisatest
+OK
+127.0.0.1:6379>
+```
+
+slave上读数据
+
+```
+127.0.0.1:6380> get test
+"thisisatest"
+127.0.0.1:6380>
+```
+
+
+
+到此我们一个简单测试就完成了。
+
+如果我们在slave服务器进行写操作呢？
+
+```
+127.0.0.1:6380> set test11 testfromslave
+(error) READONLY You can't write against a read only slave.
+127.0.0.1:6380>
+
+```
+
+$master服务器设置 slave-read-only yes 所以不能进行写操作 $
+
+$tips 我们可以在master和slave上执行info replication查看主从情况$
+
+**master**
+
+```
+127.0.0.1:6379> info replication
+# Replication
+role:master   #角色是master
+connected_slaves:1  #连接的slave 1台
+slave0:ip=127.0.0.1,port=6380,state=online,offset=751,lag=1
+master_repl_offset:765
+repl_backlog_active:1
+repl_backlog_size:1048576
+repl_backlog_first_byte_offset:2
+repl_backlog_histlen:764
+127.0.0.1:6379>
+```
+
+**slave**
+
+```
+127.0.0.1:6380> info replication
+# Replication
+role:slave   #角色slave
+master_host:127.0.0.1  #master的host
+master_port:6379       #master的port
+master_link_status:up
+master_last_io_seconds_ago:4
+master_sync_in_progress:0
+slave_repl_offset:933
+slave_priority:100
+slave_read_only:1
+connected_slaves:0
+master_repl_offset:0
+repl_backlog_active:0
+repl_backlog_size:1048576
+repl_backlog_first_byte_offset:0
+repl_backlog_histlen:0
+127.0.0.1:6380>
+```
+
+思考：如果master节点挂了，我们应该如何处理呢？
+
+下面请看Redis Sentinel。
 
 ## 5.Redis Sentinel 
+
+#### 作用：  
+
+用于管理多个Redis服务实现HA  1.监控主服务器Master；  2.通知；  3.自动故障转移； 
+
+####  协议：  
+
+流言协议、投票协议  
+
+#### 工作过程 
+
+ 1）服务器自身初始化，运行于redis-server中专用于sentinel功能的代码； 
+
+ 2）初始化sentinel状态，根据给定的配置文件，初始化监控的master服务器列表； 
+
+ 3）创建连向master的连接； 
+
+
+
+#### 配置主从
+
+这里我们配置了一主两从的主从配置配置和前面的第四章节的主从配置一样，这里我们就不在演示。
+
+#### 配置sentinel
+
+三个配置我们分别命名为sentinel12580.conf,sentinel12581.conf,sentinel12582.conf,配置项如下：
+
+```
+port 12580     #sentinel 端口
+sentinel monitor master 127.0.0.1 6379 2
+sentinel down-after-milliseconds master 5000
+sentinel failover-timeout master 15000
+```
 
 
 
