@@ -682,7 +682,7 @@ slave上读数据
 
 $master服务器设置 slave-read-only yes 所以不能进行写操作 $
 
-$tips 我们可以在master和slave上执行info replication查看主从情况$
+$tips 我们可以在master和slave上执行info     replication查看主从情况$
 
 **master**
 
@@ -749,20 +749,176 @@ repl_backlog_histlen:0
 
 #### 配置主从
 
-这里我们配置了一主两从的主从配置配置和前面的第四章节的主从配置一样，这里我们就不在演示。
+这里我们配置了一主两从的主从配置配置和前面的第四章节的主从配置一样，这里我们就不再演示。
 
 #### 配置sentinel
 
 三个配置我们分别命名为sentinel12580.conf,sentinel12581.conf,sentinel12582.conf,配置项如下：
 
 ```
-port 12580     #sentinel 端口
-sentinel monitor master 127.0.0.1 6379 2
+port 12580
+sentinel monitor master 127.0.0.1 6379 2 
 sentinel down-after-milliseconds master 5000
 sentinel failover-timeout master 15000
 ```
 
+#### 配置释义
 
+```
+port 12580     #sentinel 端口
+sentinel monitor master 127.0.0.1 6379 2 去监视一个名为mymaster的主redis实例，这个主实例的IP地址为本机地址127.0.0.1，端口号为6379，而将这个主实例判断为失效至少需要2个 Sentinel进程的同意，只要同意Sentinel的数量不达标，自动failover就不会执行  
+sentinel down-after-milliseconds master 5000
+指定了Sentinel认为Redis实例已经失效所需的毫秒数。当 实例超过该时间没有返回PING，或者直接返回错误，那么Sentinel将这个实例标记为主观下线。只有一个 Sentinel进程将实例标记为主观下线并不一定会引起实例的自动故障迁移：只有在足够数量的Sentinel都将一个实例标记为主观下线之后，实例才会被标记为客观下线，这时自动故障迁移才会执行  
+sentinel failover-timeout master 15000
+
+指定了在执行故障转移时，最多可以有多少个从Redis实例在同步新的主实例，在从Redis实例较多的情况下这个数字越小，同步的时间越长，完成故障转移所需的时间就越长  
+```
+
+
+
+#### 启动主从服务器
+
+先启动三个主从服务器，启动方式通第四章。启动完成后，在master服务器可以看到相关主从信息。
+
+```
+[8312] 16 Sep 10:40:52.867 # Server started, Redis version 3.2.100
+[8312] 16 Sep 10:40:52.870 * DB loaded from disk: 0.001 seconds
+[8312] 16 Sep 10:40:52.872 * The server is now ready to accept connections on port 6379
+[8312] 16 Sep 10:40:53.188 * Slave 127.0.0.1:6381 asks for synchronization
+[8312] 16 Sep 10:40:53.190 * Partial resynchronization not accepted: Runid mismatch (Client asked for runid '36a72ab0752754f28ba5db09d0
+231dada9f9dca5', my runid is 'ccd2050bf885d9cf90b3942b4090235d68e02443')
+[8312] 16 Sep 10:40:53.193 * Starting BGSAVE for SYNC with target: disk
+[8312] 16 Sep 10:40:53.234 * Background saving started by pid 4080
+[8312] 16 Sep 10:40:53.256 * Slave 127.0.0.1:6380 asks for synchronization
+[8312] 16 Sep 10:40:53.259 * Partial resynchronization not accepted: Runid mismatch (Client asked for runid '36a72ab0752754f28ba5db09d0
+231dada9f9dca5', my runid is 'ccd2050bf885d9cf90b3942b4090235d68e02443')
+[8312] 16 Sep 10:40:53.263 * Waiting for end of BGSAVE for SYNC
+[8312] 16 Sep 10:40:53.375 # fork operation complete
+[8312] 16 Sep 10:40:53.378 * Background saving terminated with success
+[8312] 16 Sep 10:40:53.388 * Synchronization with slave 127.0.0.1:6381 succeeded
+[8312] 16 Sep 10:40:53.393 * Synchronization with slave 127.0.0.1:6380 succeeded
+```
+
+
+
+#### 启动Redis Sentinel
+
+启动方式是依次使用redis-cli.exe sentinel12580.conf,redis-cli.exe sentinel12581.conf,redis-cli.exe sentinel12582.conf
+
+```
+C:\Program Files\Redis>redis-server.exe sentinel12580.conf
+[1040] 14 Sep 10:44:54.281 #
+*** FATAL CONFIG FILE ERROR ***
+
+[1040] 16 Sep 10:44:54.283 # Reading the configuration file, at line 2
+
+[1040] 16 Sep 10:44:54.283 # >>> 'sentinel myid 367e595d569bb8d30a0c2c96c2d5f5ff4ffbde7d'
+
+[1040] 16 Sep 10:44:54.283 # sentinel directive while not in sentinel mode
+```
+
+$启动完成报了以上的错，是因为我们没有使用sentinel模式，只需要配置文件后面加上 --sentinel即可$
+
+```
+C:\Program Files\Redis>redis-server.exe sentinel12580.conf --sentinel
+                _._
+           _.-``__ ''-._
+      _.-``    `.  `_.  ''-._           Redis 3.2.100 (00000000/0) 64 bit
+  .-`` .-```.  ```\/    _.,_ ''-._
+ (    '      ,       .-`  | `,    )     Running in sentinel mode
+ |`-._`-...-` __...-.``-._|'` _.-'|     Port: 12580
+ |    `-._   `._    /     _.-'    |     PID: 8320
+  `-._    `-._  `-./  _.-'    _.-'
+ |`-._`-._    `-.__.-'    _.-'_.-'|
+ |    `-._`-._        _.-'_.-'    |           http://redis.io
+  `-._    `-._`-.__.-'_.-'    _.-'
+ |`-._`-._    `-.__.-'    _.-'_.-'|
+ |    `-._`-._        _.-'_.-'    |
+  `-._    `-._`-.__.-'_.-'    _.-'
+      `-._    `-.__.-'    _.-'
+          `-._        _.-'
+              `-.__.-'
+
+[8320] 16 Sep 10:46:59.725 # Sentinel ID is 367e595d569bb8d30a0c2c96c2d5f5ff4ffbde7d
+[8320] 16 Sep 10:46:59.726 # +monitor master master 127.0.0.1 6379 quorum 2
+[8320] 16 Sep 10:47:04.768 # +sdown sentinel 4867b5b8d310a25fd8d05e5fef2377deddefbb08 127.0.0.1 12582 @ master 127.0.0.1 6379
+[8320] 16 Sep 10:47:04.769 # +sdown sentinel 3bea1b075787ab7b7bbe55d728f7ad68f0cffba5 127.0.0.1 12581 @ master 127.0.0.1 6379
+```
+
+出现以上内容，这说明我们的Redis Sentinel启动成功
+
+启动成功后，我们可以看到redis sentinel在监控master节点了
+
+```
+[8320] 16 Sep 10:46:59.726 # +monitor master master 127.0.0.1 6379 quorum 2
+```
+
+#### 测试
+
+###### 首先退出master节点
+
+```
+127.0.0.1:6379> info replication
+# Replication
+role:master
+connected_slaves:2
+slave0:ip=127.0.0.1,port=6381,state=online,offset=52880,lag=1
+slave1:ip=127.0.0.1,port=6380,state=online,offset=52880,lag=0
+master_repl_offset:52880
+repl_backlog_active:1
+repl_backlog_size:1048576
+repl_backlog_first_byte_offset:2
+repl_backlog_histlen:52879
+127.0.0.1:6379> shutdown
+not connected> exit
+
+C:\Program Files\Redis>
+```
+
+###### 主节点已经关闭
+
+```
+[8312] 16 Sep 10:40:53.263 * Waiting for end of BGSAVE for SYNC
+[8312] 16 Sep 10:40:53.375 # fork operation complete
+[8312] 16 Sep 10:40:53.378 * Background saving terminated with success
+[8312] 16 Sep 10:40:53.388 * Synchronization with slave 127.0.0.1:6381 succeeded
+[8312] 16 Sep 10:40:53.393 * Synchronization with slave 127.0.0.1:6380 succeeded
+[8312] 16 Sep 10:52:43.850 # User requested shutdown...
+[8312] 16 Sep 10:52:43.850 * Saving the final RDB snapshot before exiting.
+[8312] 16 Sep 10:52:43.855 * DB saved on disk
+[8312] 14 Sep 10:52:43.855 # Redis is now ready to exit, bye bye...
+```
+
+###### 查看Redis Sentinel的信息提示
+
+```
+Sep 10:52:58.611 # +switch-master master 127.0.0.1 6379 127.0.0.1 6380  已经切换成功
+Sep 10:52:58.618 * +slave slave 127.0.0.1:6381 127.0.0.1 6381 @ master 127.0.0.1 6380
+Sep 10:52:58.629 * +slave slave 127.0.0.1:6379 127.0.0.1 6379 @ master 127.0.0.1 6380
+Sep 10:53:03.633 # +sdown slave 127.0.0.1:6379 127.0.0.1 6379 @ master 127.0.0.1 6380
+Sep 10:53:03.633 # +sdown slave 127.0.0.1:6381 127.0.0.1 6381 @ master 127.0.0.1 6380
+Sep 10:53:31.594 # -sdown slave 127.0.0.1:6381 127.0.0.1 6381 @ master 127.0.0.1 6380
+```
+
+
+
+当我们再次启动主节点的时候会自动切换回6379主节点
+
+```
+Sep 10:59:17.920 # +switch-master master 127.0.0.1 6381 127.0.0.1 6379
+Sep 10:59:17.925 * +slave slave 127.0.0.1:6380 127.0.0.1 6380 @ master 127.0.0.1 6379
+Sep 10:59:17.927 * +slave slave 127.0.0.1:6381 127.0.0.1 6381 @ master 127.0.0.1 6379
+Sep 10:59:22.985 # +sdown slave 127.0.0.1:6381 127.0.0.1 6381 @ master 127.0.0.1 6379
+Sep 10:59:22.986 # +sdown slave 127.0.0.1:6380 127.0.0.1 6380 @ master 127.0.0.1 6379
+Sep 10:59:38.185 # -sdown slave 127.0.0.1:6381 127.0.0.1 6381 @ master 127.0.0.1 6379
+Sep 10:59:38.186 # -sdown slave 127.0.0.1:6380 127.0.0.1 6380 @ master 127.0.0.1 6379
+```
+
+
+
+
+
+到此Redis Sentinel基本使用应经讲解完成。
 
  
 
