@@ -924,3 +924,139 @@ Sep 10:59:38.186 # -sdown slave 127.0.0.1:6380 127.0.0.1 6380 @ master 127.0.0.1
 
 ## 6.Redis Cluster
 
+#### 介绍
+
+```
+Redis Cluster是Redis的分布式解决方案，在Redis 3.0版本正式推出的，有效解决了Redis分布式方面的需求。当遇到单机内存、并发、流量等瓶颈时，可以采用Cluster架构达到负载均衡的目的。
+```
+
+#### 数据分布
+
+分布式数据库首要解决把整个数据集按照分区规则映射到多个节点的问题，即把数据集划分到多个节点上，每个节点负责整个数据的一个子集。常见的分区规则有哈希分区和顺序分区。`Redis Cluster`采用哈希分区规则，因此接下来会讨论哈希分区规则。常见的哈希分区有以下几种：
+
+节点取余分区
+一致性哈希分区
+虚拟槽分区
+
+`Redis Cluster`采用虚拟槽分区，因此先介绍一下虚拟槽分区。
+
+虚拟槽分区巧妙地使用了哈希空间，使用分散度良好的哈希函数把所有的数据映射到一个固定范围内的整数集合，整数定义为槽（slot）。比如`Redis Cluster`槽的范围是`0 ～ 16383`。槽是集群内数据管理和迁移的基本单位。采用大范围的槽的主要目的是为了方便数据的拆分和集群的扩展，每个节点负责一定数量的槽。
+
+
+
+![redis-cluster](https://images2015.cnblogs.com/blog/997621/201703/997621-20170330105832764-1351765071.png) 
+
+#### redis-cluster的优势　　
+
+　　1、官方推荐，毋庸置疑。
+
+　　2、去中心化，集群最大可增加1000个节点，性能随节点增加而线性扩展。
+
+　　3、管理方便，后续可自行增加或摘除节点，移动分槽等等。
+
+　　4、简单，易上手。
+
+#### redis-cluster 配置
+
+首先配置新建cluster配置文件分别为cluster-7000.conf，cluster-7001.conf，……cluster-7005.conf六个节点。
+
+基本配置文件如下：
+
+```
+port  7000         //端口
+daemonize    yes            //redis后台运行  
+cluster-enabled yes        //开启cluster
+logfile "7005.log"      //日志文件
+dbfilename "7005.rdb"    //rdb文件
+cluster-config-file  nodes.conf   //集群的配置  配置文件首次启动自动生成 7000,7001,7002
+cluster-node-timeout  15000      //请求超时  默认15秒，可自行设置
+appendonly  yes             //aof日志开启  有需要就开启，它会每次写操作都记录一条日志　
+```
+
+
+
+#### 启动redis-cluster
+
+依次启动各个节点，示例如下。
+
+```
+redis-server.exe cluster-7000.conf
+```
+
+启动节点之后，我们进行连接测试。
+
+```
+>redis-cli.exe -p 7000
+127.0.0.1:7000> set name katy
+(error) CLUSTERDOWN The cluster is down
+127.0.0.1:7000>
+```
+
+这里出现了`(error) CLUSTERDOWN The cluster is down`这是提示当前集群不可用，因为redis采用虚拟槽分区，这里的16384个槽没有进行分配所以报错。
+
+我们也可以查看当前节点的信息。
+
+```
+127.0.0.1:7000> cluster info
+cluster_state:fail
+cluster_slots_assigned:0
+cluster_slots_ok:0
+cluster_slots_pfail:0
+cluster_slots_fail:0
+cluster_known_nodes:1
+cluster_size:1
+cluster_current_epoch:0
+cluster_my_epoch:0
+cluster_stats_messages_sent:0
+cluster_stats_messages_received:0
+```
+
+通过上面信息我们可以看到，当前节点的状态为`fail`.分配槽和成功的槽均为0.
+
+
+
+#### 节点的握手meet
+
+我们需要执行cluster meet 让各个节点通讯，握手。
+
+ ```
+>redis-cli.exe -p 7000 cluster meet 127.0.0.1 7001
+OK
+……
+ ```
+
+出现ok，代表我们已经成功握手通讯。
+
+我们再次执行`cluster nodes` 查看节点信息
+
+ ```
+>redis-cli.exe -p 7000 cluster nodes
+f149aec82ec5836db642e4f969a1cae33709e2b3 127.0.0.1:7001 slave 13b8c4962963fdb0a4cb19ff01c1509a74d83ffd 0 1537035589537 1 connected
+13b8c4962963fdb0a4cb19ff01c1509a74d83ffd 127.0.0.1:7000 myself,master - 0 0 1 connected 741 2589 5798 6918 7629 8188 12539
+ ```
+
+应经成功连接。
+
+
+
+我们查看节点信息已经出现了6个。
+
+```
+>redis-cli.exe -p 7000 cluster info
+cluster_state:fail
+cluster_slots_assigned:7
+cluster_slots_ok:7
+cluster_slots_pfail:0
+cluster_slots_fail:0
+cluster_known_nodes:6
+cluster_size:1
+cluster_current_epoch:1
+cluster_my_epoch:1
+cluster_stats_messages_sent:896
+cluster_stats_messages_received:887 2589 5798 6918 7629 8188 12539
+```
+
+#### 启动主从
+
+我们这里将7000,7001,7002节点设置为主节点，7003,7004,7005为从节点，对应关系是7003节点复制7000数据，7004节点复制7001数据，7005节点复制7002数据。使用的命令是：
+
