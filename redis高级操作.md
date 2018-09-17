@@ -592,6 +592,8 @@ hahah
 
 
 
+**下面说下redis集群的三种方式，分别是主从复制，Redis Sentinel （哨兵），redis-cluster。**
+
 
 
 ## 4.Redis主从复制
@@ -1030,9 +1032,13 @@ OK
 我们再次执行`cluster nodes` 查看节点信息
 
  ```
->redis-cli.exe -p 7000 cluster nodes
-f149aec82ec5836db642e4f969a1cae33709e2b3 127.0.0.1:7001 slave 13b8c4962963fdb0a4cb19ff01c1509a74d83ffd 0 1537035589537 1 connected
-13b8c4962963fdb0a4cb19ff01c1509a74d83ffd 127.0.0.1:7000 myself,master - 0 0 1 connected 741 2589 5798 6918 7629 8188 12539
+>redis-cli -p 7000 cluster nodes
+ac7619753c43403709289c1be62b43c20ffced4f 127.0.0.1:7004 master - 0 1537169481099 4 connected
+ac182f675425888fa38f62d0e40b8020a6d3d6af 127.0.0.1:7002 master - 0 1537169483120 3 connected
+065c4745c983e3e7ddf0d7dfc608bcfdda451523 127.0.0.1:7005 master - 0 1537169481603 5 connected
+3d0ca5303f8896579b1bc9f7968fb0bb20a1b261 127.0.0.1:7000 myself,master - 0 0 1 connected
+8ae5e70ecbf33809d5845702798493f2dccd511b 127.0.0.1:7003 master - 0 1537169482110 2 connected
+f419fc0c82702bfe5606eda89ae31a19a531eb06 127.0.0.1:7001 master - 0 1537169484130 0 connected
  ```
 
 应经成功连接。
@@ -1044,19 +1050,183 @@ f149aec82ec5836db642e4f969a1cae33709e2b3 127.0.0.1:7001 slave 13b8c4962963fdb0a4
 ```
 >redis-cli.exe -p 7000 cluster info
 cluster_state:fail
-cluster_slots_assigned:7
-cluster_slots_ok:7
+cluster_slots_assigned:0
+cluster_slots_ok:0
 cluster_slots_pfail:0
 cluster_slots_fail:0
 cluster_known_nodes:6
-cluster_size:1
-cluster_current_epoch:1
+cluster_size:0
+cluster_current_epoch:5
 cluster_my_epoch:1
-cluster_stats_messages_sent:896
-cluster_stats_messages_received:887 2589 5798 6918 7629 8188 12539
+cluster_stats_messages_sent:991
+cluster_stats_messages_received:991
+
+
 ```
 
 #### 启动主从
 
 我们这里将7000,7001,7002节点设置为主节点，7003,7004,7005为从节点，对应关系是7003节点复制7000数据，7004节点复制7001数据，7005节点复制7002数据。使用的命令是：
+
+```
+redis-cli.exe -p 7003 cluster replicate 节点node
+```
+
+再次查看节点info
+
+```
+127.0.0.1:7000> cluster info
+cluster_state:ok
+cluster_slots_assigned:16384
+cluster_slots_ok:16384
+cluster_slots_pfail:0
+cluster_slots_fail:0
+cluster_known_nodes:6
+cluster_size:3
+cluster_current_epoch:5
+cluster_my_epoch:1
+cluster_stats_messages_sent:6197
+cluster_stats_messages_received:6197
+```
+
+查看节点
+
+```
+>redis-cli -p 7000 cluster nodes
+ac7619753c43403709289c1be62b43c20ffced4f 127.0.0.1:7004 slave f419fc0c82702bfe5606eda89ae31a19a531eb06 0 1537172093492 4 connected
+ac182f675425888fa38f62d0e40b8020a6d3d6af 127.0.0.1:7002 slave 3d0ca5303f8896579b1bc9f7968fb0bb20a1b261 0 1537172096536 3 connected
+065c4745c983e3e7ddf0d7dfc608bcfdda451523 127.0.0.1:7005 master - 0 1537172092377 5 connected 5462-10922
+3d0ca5303f8896579b1bc9f7968fb0bb20a1b261 127.0.0.1:7000 myself,master - 0 0 1 connected 0-5461
+8ae5e70ecbf33809d5845702798493f2dccd511b 127.0.0.1:7003 slave 065c4745c983e3e7ddf0d7dfc608bcfdda451523 0 1537172095523 5 connected
+f419fc0c82702bfe5606eda89ae31a19a531eb06 127.0.0.1:7001 master - 0 1537172094513 0 connected 10923-16383
+```
+
+$这里可以看到已经是三个master节点，三个slave节点$
+
+
+
+我们还可以使用`cluster slots`查看槽位的分配信息。
+
+```
+/redis# redis-cli -p 7000 cluster slots
+1) 1) (integer) 5462
+   2) (integer) 10922
+   3) 1) "127.0.0.1"
+      2) (integer) 7005
+   4) 1) "127.0.0.1"
+      2) (integer) 7003
+2) 1) (integer) 0
+   2) (integer) 5461
+   3) 1) "127.0.0.1"
+      2) (integer) 7000
+   4) 1) "127.0.0.1"
+      2) (integer) 7002
+3) 1) (integer) 10923
+   2) (integer) 16383
+   3) 1) "127.0.0.1"
+      2) (integer) 7001
+   4) 1) "127.0.0.1"
+      2) (integer) 7004
+```
+
+
+
+现在我们测试读写操作。
+
+```
+127.0.0.1:7000> set hello world
+OK
+127.0.0.1:7000> get hello 
+"world"
+127.0.0.1:7000> set key keys
+(error) MOVED 12539 127.0.0.1:7001
+```
+
+这里出现了一个MOVED错误，是因为7000节点的槽分配为0-5462，但设置key时的槽位12539，所以出现了一个MOVED的错误。
+
+我们可以在启动服务是使用`redis-cli -c -p 7000`命令来启动服务。
+
+```
+/etc/redis# redis-cli -c -p 7000
+127.0.0.1:7000> set key keys
+-> Redirected to slot [12539] located at 127.0.0.1:7001
+OK
+127.0.0.1:7001> 
+```
+
+这时系统会自动重定向到7001节点12539这个槽。
+
+#### 测试自动切换master
+
+我们此时杀死一个master 7000，此时再看。
+
+```
+ ps -ef |grep redis
+redis      7358      1  0 15:09 ?        00:00:11 /usr/bin/redis-server 127.0.0.1:6379
+root       8212   2342  0 15:23 ?        00:00:16 redis-server *:7001 [cluster]
+root       8230   2342  0 15:23 ?        00:00:11 redis-server *:7002 [cluster]
+root       8248   2342  0 15:23 ?        00:00:11 redis-server *:7003 [cluster]
+root       8266   2342  0 15:23 ?        00:00:11 redis-server *:7004 [cluster]
+root      31475      1  0 16:46 ?        00:00:00 redis-server *:7005 [cluster]
+```
+
+查看节点信息
+
+```
+redis-cli -p 7001 cluster nodes
+redis-cli -p 7001 cluster nodes
+3d0ca5303f8896579b1bc9f7968fb0bb20a1b261 127.0.0.1:7000 master,fail - 1537174104941 1537174099583 1 disconnected
+065c4745c983e3e7ddf0d7dfc608bcfdda451523 127.0.0.1:7005 slave 8ae5e70ecbf33809d5845702798493f2dccd511b 0 1537174159373 6 connected
+ac7619753c43403709289c1be62b43c20ffced4f 127.0.0.1:7004 slave f419fc0c82702bfe5606eda89ae31a19a531eb06 0 1537174157348 4 connected
+f419fc0c82702bfe5606eda89ae31a19a531eb06 127.0.0.1:7001 myself,master - 0 0 0 connected 10923-16383
+8ae5e70ecbf33809d5845702798493f2dccd511b 127.0.0.1:7003 master - 0 1537174155317 6 connected 5462-10922
+ac182f675425888fa38f62d0e40b8020a6d3d6af 127.0.0.1:7002 master - 0 1537174158361 7 connected 0-5461
+```
+
+此时7000这个master已经挂了，但是7003自动升级成master了。
+
+7000节点已经挂了，那此时的7000节点的数据呢？我们可以查看下。
+
+```
+ redis-cli -p 7001 -c
+127.0.0.1:7001> keys *
+1) "name1"
+2) "key"
+3) "name5"
+127.0.0.1:7001> get hello
+-> Redirected to slot [866] located at 127.0.0.1:7002
+"world"
+```
+
+原来在7000上的hello 已经重定向7002节点上了。
+
+
+
+#### PHP连接redis-cluster集群
+
+```php
+ require 'predis/autoload.php';//引入predis相关包  
+    //redis实例  
+    $servers = array(  
+        'tcp://192.168.1.198:7000',  
+        'tcp://192.168.1.198:7001',  
+        'tcp://192.168.1.198:7002',  
+        'tcp://192.168.1.199:7003',  
+        'tcp://192.168.1.199:7004',  
+        'tcp://192.168.1.199:7005',  
+    );  
+      
+    $client = new Predis\Client($servers, array('cluster' => 'redis'));  
+      
+    $client->set("name1", "jim");  
+    $client->set("name2", "tom");  
+    $client->set("name3", "lucy");  
+      
+    $name1 = $client->get('name1');  
+    $name2 = $client->get('name2');  
+    $name3 = $client->get('name3');  
+
+```
+
+这里可以使用predis扩展操作redis-cluster集群。end……
 
